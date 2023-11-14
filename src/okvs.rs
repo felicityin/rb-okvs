@@ -39,7 +39,7 @@ impl RbOkvs {
             band_width: if band_width < columns {
                 band_width
             } else {
-                columns * 60 / 100
+                columns * 40 / 100
             },
         }
     }
@@ -49,12 +49,12 @@ impl Okvs for RbOkvs {
     fn encode(&self, input: Vec<Pair>) -> Result<Encoding> {
         let y = input.iter().map(|a| a.1).collect();
         let (matrix, start_indexes) = self.create_sorted_matrix(input);
-        gaussian(y, matrix, start_indexes, self.band_width)
+        simple_gauss(y, matrix, start_indexes, self.band_width)
     }
 
     fn decode(&self, encoding: Encoding, key: &Key) -> Value {
         let start = self.hash_to_position(key);
-        let value = self.hash_to_band(key, self.band_width);
+        let value = self.hash_to_band(key);
         inner_product(&value, &encoding[start..(start + self.band_width)].into())
     }
 }
@@ -67,14 +67,15 @@ impl RbOkvs {
         let mut bands: HashMap<usize, Vec<bool>> = HashMap::new();
 
         for (i, (key, _value)) in input.into_iter().enumerate() {
-            let band = self.hash_to_band(&key, self.band_width);
+            let band = self.hash_to_band(&key);
             let start = self.hash_to_position(&key);
 
             bands.insert(i, band.clone());
             start_indexes.insert(i, start);
 
             let first_one_id = first_one_index(&band);
-            let first_one_id = if first_one_id == band.len() { // All elements are 0
+            let first_one_id = if first_one_id == band.len() {
+                // All elements are 0
                 self.columns
             } else {
                 start + first_one_id
@@ -84,6 +85,7 @@ impl RbOkvs {
 
         start_one_indexes.sort_by(|a, b| a.1.cmp(&b.1));
 
+        // TODO: reduce the storage space of the matrix to (n * band_width)
         let mut matrix = vec![vec![false; self.columns]; n]; // n * columns
         let mut start_ids: Vec<usize> = vec![0; n];
 
@@ -107,11 +109,11 @@ impl RbOkvs {
     }
 
     /// hash2(key) -> {0, 1}^band_width
-    fn hash_to_band(&self, key: &Key, width: usize) -> Vec<bool> {
-        let v = hash(key, (width + 7) / 8);
+    fn hash_to_band(&self, key: &Key) -> Vec<bool> {
+        let v = hash(key, (self.band_width + 7) / 8);
         let v = BitSlice::<_, Lsb0>::from_slice(&v).to_bitvec();
         let v: Vec<bool> = v.into_iter().collect();
-        v[0..width].into()
+        v[0..self.band_width].into()
     }
 }
 
@@ -133,26 +135,16 @@ mod test {
     #[test]
     fn test_hash_to_band() {
         let rb_okvs = RbOkvs::new(3);
-        let band = rb_okvs.hash_to_band(&[0; 8], 8);
-        assert_eq!(band.len(), 8);
+        let band = rb_okvs.hash_to_band(&[0; 8]);
+        assert_eq!(band.len(), rb_okvs.band_width);
     }
 
     #[test]
     fn test_create_sorted_matrix() {
-        let pairs: Vec<Pair> = vec![
-            ([0; 8], false),
-            ([1; 8], true),
-            ([2; 8], true),
-            ([3; 8], false),
-            ([4; 8], true),
-            ([5; 8], true),
-            ([6; 8], false),
-            ([7; 8], true),
-            ([8; 8], true),
-            ([9; 8], false),
-            ([10; 8], true),
-            ([11; 8], true),
-        ];
+        let mut pairs: Vec<Pair> = vec![];
+        for i in 0..10 {
+            pairs.push(([i; 8], false));
+        }
         let rb_okvs = RbOkvs::new(pairs.len());
         let (matrix, start_indexes) = rb_okvs.create_sorted_matrix(pairs);
 
@@ -161,35 +153,19 @@ mod test {
         }
     }
 
-    // Failed!
     #[test]
     fn test_rb_okvs() {
-        let pairs: Vec<Pair> = vec![
-            ([0; 8], false),
-            ([1; 8], true),
-            ([2; 8], true),
-            ([3; 8], false),
-            ([4; 8], true),
-            ([5; 8], true),
-            ([6; 8], false),
-            ([7; 8], true),
-            ([8; 8], true),
-            ([9; 8], false),
-            ([10; 8], true),
-            ([11; 8], true),
-        ];
+        let mut pairs: Vec<Pair> = vec![];
+        for i in 0..100 {
+            pairs.push(([i; 8], false));
+        }
         let rb_okvs = RbOkvs::new(pairs.len());
 
-        let (matrix, _start_indexes) = rb_okvs.create_sorted_matrix(pairs.clone());
-        for i in 0..matrix.len() {
-            for j in 0..matrix[0].len() {
-                print!("{} ", matrix[i][j]);
-            }
-            println!();
-        }
-
         let encode = rb_okvs.encode(pairs).unwrap();
-        let decode = rb_okvs.decode(encode, &[6; 8]);
-        assert!(!decode);
+
+        for i in 0..100 {
+            let decode = rb_okvs.decode(encode.clone(), &[i; 8]);
+            assert!(!decode);
+        }
     }
 }

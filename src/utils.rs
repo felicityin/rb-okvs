@@ -7,7 +7,7 @@ use crate::okvs::{Key, Value};
 
 /// Efficient Gauss Elimination for Near-Quadratic Matrices with One Short
 /// Random Block per Row, with Applications
-pub fn gaussian(
+pub fn simple_gauss(
     mut y: Vec<Value>,
     mut matrix: Vec<Vec<bool>>,
     start_indexes: Vec<usize>,
@@ -18,23 +18,23 @@ pub fn gaussian(
     assert_eq!(rows, start_indexes.len());
     let cols = matrix[0].len();
 
-    let mut piv: Vec<usize> = vec![usize::MAX; rows];
+    let mut pivot: Vec<usize> = vec![usize::MAX; rows];
     for i in 0..rows {
         for j in start_indexes[i]..min(start_indexes[i] + band_width, cols) {
             if matrix[i][j] {
-                piv[i] = j;
+                pivot[i] = j;
                 for k in (i + 1)..rows {
-                    if start_indexes[k] <= piv[i] && matrix[k][piv[i]] {
+                    if start_indexes[k] <= pivot[i] && matrix[k][pivot[i]] {
                         for l in 0..cols {
                             matrix[k][l] ^= matrix[i][l];
                         }
-                        y[k] ^= y[i]; // todo
+                        y[k] ^= y[i]; // TODO: make it general
                     }
                 }
                 break;
             }
         }
-        if piv[i] == usize::MAX {
+        if pivot[i] == usize::MAX {
             // row i is 0
             return Err(Error::ZeroRow(i));
         }
@@ -42,8 +42,8 @@ pub fn gaussian(
 
     // back subsitution
     let mut x = vec![false; cols]; // solution to Ax = y
-    for i in (0..cols - 1).rev() {
-        x[piv[i]] = inner_product(&matrix[i], &x) ^ y[i];
+    for i in (0..rows).rev() {
+        x[pivot[i]] = inner_product(&matrix[i], &x) ^ y[i];
     }
     Ok(x)
 }
@@ -117,7 +117,7 @@ mod test {
         let start_indexes = vec![0, 1, 2];
         let y = vec![false, true, false];
 
-        let x = gaussian(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
+        let x = simple_gauss(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
         assert!(x[0]);
         assert!(x[1]);
         assert!(!x[2]);
