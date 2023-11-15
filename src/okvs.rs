@@ -20,7 +20,7 @@ pub type Pair = (Key, Value);
 /// Oblivious Key-Value Stores
 pub trait Okvs {
     fn encode(&self, input: Vec<Pair>) -> Result<Encoding>;
-    fn decode(&self, encoding: Encoding, key: &Key) -> Value;
+    fn decode(&self, encoding: &Encoding, key: &Key) -> Value;
 }
 
 /// RB-OKVS, Oblivious Key-Value Stores
@@ -52,7 +52,7 @@ impl Okvs for RbOkvs {
         simple_gauss(y, matrix, start_indexes, self.band_width)
     }
 
-    fn decode(&self, encoding: Encoding, key: &Key) -> Value {
+    fn decode(&self, encoding: &Encoding, key: &Key) -> Value {
         let start = self.hash_to_position(key);
         let value = self.hash_to_band(key);
         inner_product(&value, &encoding[start..(start + self.band_width)].into())
@@ -164,7 +164,7 @@ mod test {
         let encode = rb_okvs.encode(pairs).unwrap();
 
         for i in 0..100 {
-            let decode = rb_okvs.decode(encode.clone(), &[i; 8]);
+            let decode = rb_okvs.decode(&encode, &[i; 8]);
             assert!(!decode);
         }
     }
