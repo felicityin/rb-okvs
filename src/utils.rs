@@ -69,7 +69,7 @@ pub fn blake2b<const N: usize>(data: &Key) -> [u8; N] {
     buf
 }
 
-pub fn hash(data: &Key, to_bytes_size: usize) -> Vec<u8> {
+pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     let mut hasher = Blake2b512::new();
 
     if to_bytes_size <= 64 {
