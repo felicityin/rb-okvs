@@ -3,10 +3,12 @@ use std::cmp::min;
 use blake2::{Blake2b512, Digest};
 
 use crate::error::{Error, Result};
-use crate::okvs::{Key, Value};
+use crate::types::Value;
 
-/// Efficient Gauss Elimination for Near-Quadratic Matrices with One Short
-/// Random Block per Row, with Applications
+/// Martin Dietzfelbinger and Stefan Walzer. Efficient Gauss Elimination for
+/// Near-Quadratic Matrices with One Short Random Block per Row, with
+/// Applications. In 27th Annual European Symposium on Algorithms (ESA 2019).
+/// Schloss Dagstuhl-Leibniz-Zentrum fuer Informatik, 2019.
 pub fn simple_gauss(
     mut y: Vec<Value>,
     mut matrix: Vec<Vec<bool>>,
@@ -28,7 +30,7 @@ pub fn simple_gauss(
                         for l in 0..cols {
                             matrix[k][l] ^= matrix[i][l];
                         }
-                        y[k] ^= y[i]; // TODO: make it general
+                        y[k] ^= y[i];
                     }
                 }
                 break;
@@ -57,7 +59,7 @@ pub fn inner_product(a: &Vec<bool>, b: &Vec<bool>) -> bool {
     result
 }
 
-pub fn blake2b<const N: usize>(data: &Key) -> [u8; N] {
+pub fn blake2b<const N: usize>(data: &[u8]) -> [u8; N] {
     use blake2::digest::{Update, VariableOutput};
     use blake2::Blake2bVar;
     assert!(N <= 64);
