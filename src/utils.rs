@@ -1,18 +1,21 @@
 use std::cmp::min;
 
+use bitvec::prelude::*;
 use blake2::{Blake2b512, Digest};
 
 use crate::error::{Error, Result};
-use crate::okvs::{Key, Value};
+use crate::types::Value;
 
-/// Efficient Gauss Elimination for Near-Quadratic Matrices with One Short
-/// Random Block per Row, with Applications
+/// Martin Dietzfelbinger and Stefan Walzer. Efficient Gauss Elimination for
+/// Near-Quadratic Matrices with One Short Random Block per Row, with
+/// Applications. In 27th Annual European Symposium on Algorithms (ESA 2019).
+/// Schloss Dagstuhl-Leibniz-Zentrum fuer Informatik, 2019.
 pub fn simple_gauss(
     mut y: Vec<Value>,
-    mut matrix: Vec<Vec<bool>>,
+    mut matrix: Vec<BitVec>,
     start_indexes: Vec<usize>,
     band_width: usize,
-) -> Result<Vec<bool>> {
+) -> Result<Vec<u64>> {
     let rows = matrix.len();
     assert!(rows > 0);
     assert_eq!(rows, start_indexes.len());
@@ -25,10 +28,8 @@ pub fn simple_gauss(
                 pivot[i] = j;
                 for k in (i + 1)..rows {
                     if start_indexes[k] <= pivot[i] && matrix[k][pivot[i]] {
-                        for l in 0..cols {
-                            matrix[k][l] ^= matrix[i][l];
-                        }
-                        y[k] ^= y[i]; // TODO: make it general
+                        matrix[k] = matrix[k].clone() ^ &matrix[i];
+                        y[k] ^= y[i];
                     }
                 }
                 break;
@@ -41,23 +42,25 @@ pub fn simple_gauss(
     }
 
     // back subsitution
-    let mut x = vec![false; cols]; // solution to Ax = y
+    let mut x = vec![0u64; cols]; // solution to Ax = y
     for i in (0..rows).rev() {
         x[pivot[i]] = inner_product(&matrix[i], &x) ^ y[i];
     }
     Ok(x)
 }
 
-pub fn inner_product(a: &Vec<bool>, b: &Vec<bool>) -> bool {
-    assert_eq!(a.len(), b.len());
-    let mut result = false;
-    for i in 0..a.len() {
-        result ^= a[i] & b[i];
+pub fn inner_product(m: &BitVec, x: &[Value]) -> Value {
+    assert_eq!(m.len(), x.len());
+    let mut result = 0u64;
+    for i in 0..m.len() {
+        if m[i] && x[i] != 0 {
+            result ^= x[i]
+        }
     }
     result
 }
 
-pub fn blake2b<const N: usize>(data: &Key) -> [u8; N] {
+pub fn blake2b<const N: usize>(data: &[u8]) -> [u8; N] {
     use blake2::digest::{Update, VariableOutput};
     use blake2::Blake2bVar;
     assert!(N <= 64);
@@ -79,8 +82,8 @@ pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     }
 
     let mut result = vec![];
-    let loop_count = (to_bytes_size + 63) / 64;
     let mut last_length = to_bytes_size;
+    let loop_count = (to_bytes_size + 63) / 64;
 
     for i in 0..loop_count {
         if i == loop_count - 1 {
@@ -94,9 +97,9 @@ pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     result
 }
 
-pub fn first_one_index(bits: &Vec<bool>) -> usize {
+pub fn first_one_index(bits: &BitVec) -> usize {
     for (i, v) in bits.iter().enumerate() {
-        if v == &true {
+        if v == true {
             return i;
         }
     }
@@ -109,19 +112,15 @@ mod test {
 
     #[test]
     fn test_gaussian() {
-        let matrix = vec![
-            vec![true, true, false, false],
-            vec![false, true, true, false],
-            vec![false, false, true, true],
-        ];
+        let mut matrix = vec![];
+        matrix.push(bitvec![1, 1, 0, 0]);
+        matrix.push(bitvec![0, 1, 1, 0]);
+        matrix.push(bitvec![0, 0, 1, 1]);
+
         let start_indexes = vec![0, 1, 2];
-        let y = vec![false, true, false];
+        let y = vec![0, 1, 2];
 
         let x = simple_gauss(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
-        assert!(x[0]);
-        assert!(x[1]);
-        assert!(!x[2]);
-        assert!(!x[3]);
 
         assert_eq!(inner_product(&matrix[0], &x), y[0]);
         assert_eq!(inner_product(&matrix[1], &x), y[1]);
@@ -130,9 +129,9 @@ mod test {
 
     #[test]
     fn test_inner_product() {
-        let a = vec![true, true, false, false];
-        let b = vec![true, true, false, false];
-        assert!(!inner_product(&a, &b));
+        let a = bitvec![1, 1, 0, 0];
+        let b = vec![1, 1, 0, 0];
+        assert_eq!(0, inner_product(&a, &b));
     }
 
     #[test]
@@ -152,7 +151,7 @@ mod test {
 
     #[test]
     fn test_first_one_index() {
-        let a = vec![false, true];
+        let a = bitvec![0, 1];
         assert_eq!(first_one_index(&a), 1);
     }
 }
