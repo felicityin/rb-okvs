@@ -93,7 +93,6 @@ fn concat<T: std::fmt::Display>(mut a: String, b: T) -> String {
     a
 }
 
-// TODO: make it general
 fn create_key(s: String) -> OkvsKey {
     let k = hash(&s.as_bytes(), 8);
     let mut buf = [0u8; 8];
@@ -101,12 +100,13 @@ fn create_key(s: String) -> OkvsKey {
     OkvsKey(buf)
 }
 
-// TODO: make it general
 fn create_value(ke: &KE, e: String) -> Value {
     let key = AesKey::<Aes256Gcm>::from_slice(ke);
     let cipher = Aes256Gcm::new(key);
     let ciphertext = cipher.encrypt(&Default::default(), e.as_bytes()).unwrap(); // TODO: randome nonce
-    (ciphertext[0] % 2) != 0
+    let mut sum: u64 = 0;
+    ciphertext.into_iter().for_each(|e| sum += e as u64);
+    sum
 }
 
 #[cfg(test)]
@@ -119,7 +119,7 @@ mod test {
     fn test_rb_mm() {
         let mut pairs: Vec<Pair<OkvsKey>> = vec![];
         for i in 0..200 {
-            pairs.push((OkvsKey([i; 8]), false));
+            pairs.push((OkvsKey([i; 8]), i as u64));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
@@ -128,7 +128,7 @@ mod test {
 
         for i in 0..200 {
             let value = rb_mm.query(OkvsKey([i; 8]), &client_state, &emm);
-            assert!(!value);
+            assert_eq!(value, i as u64);
         }
     }
 }

@@ -1,7 +1,9 @@
+use bitvec::prelude::BitVec;
+
 use crate::error::Result;
 
-pub type Value = bool;
-pub type Encoding = Vec<bool>;
+pub type Value = u64;
+pub type Encoding = Vec<u64>;
 pub type Pair<T> = (T, Value);
 
 /// Oblivious Key-Value Stores
@@ -11,7 +13,7 @@ pub trait Okvs {
 }
 
 pub trait Key {
-    fn hash_to_position(&self, range: usize) -> usize;
-    fn hash_to_band(&self, band_width: usize) -> Vec<bool>;
+    fn hash_to_index(&self, range: usize) -> usize;
+    fn hash_to_band(&self, band_width: usize) -> BitVec;
     fn to_bytes(&self) -> Vec<u8>;
 }
