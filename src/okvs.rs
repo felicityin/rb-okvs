@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bitvec::prelude::*;
 
 use crate::error::{Error, Result};
-use crate::types::{Encoding, Key, Okvs, Pair, Value};
+use crate::types::{Encoding, Okvs, OkvsK, OkvsV, Pair};
 use crate::utils::*;
 
 /// For small encoding sizes (i.e., high rate), one should try to fix small
@@ -32,12 +32,12 @@ impl RbOkvs {
 }
 
 impl Okvs for RbOkvs {
-    fn encode<K: Key>(&self, input: Vec<Pair<K>>) -> Result<Encoding> {
+    fn encode<K: OkvsK, V: OkvsV>(&self, input: Vec<Pair<K, V>>) -> Result<Encoding<V>> {
         let (matrix, start_indexes, y) = self.create_sorted_matrix(input)?;
-        simple_gauss(y, matrix, start_indexes, self.band_width)
+        simple_gauss::<V>(y, matrix, start_indexes, self.band_width)
     }
 
-    fn decode(&self, encoding: &Encoding, key: &impl Key) -> Value {
+    fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
         let start = key.hash_to_index(self.columns - self.band_width);
         let band = key.hash_to_band(self.band_width);
         inner_product(&self.create_row(start, &band), encoding)
@@ -45,10 +45,10 @@ impl Okvs for RbOkvs {
 }
 
 impl RbOkvs {
-    fn create_sorted_matrix<K: Key>(
+    fn create_sorted_matrix<K: OkvsK, V: OkvsV>(
         &self,
-        input: Vec<Pair<K>>,
-    ) -> Result<(Vec<BitVec>, Vec<usize>, Vec<Value>)> {
+        input: Vec<Pair<K, V>>,
+    ) -> Result<(Vec<BitVec>, Vec<usize>, Vec<V>)> {
         let n = input.len();
         let mut y_map = HashMap::new();
         let mut first_one_indexes: Vec<(usize, usize)> = vec![];
@@ -77,7 +77,7 @@ impl RbOkvs {
 
         let mut matrix: Vec<BitVec> = vec![]; // n * columns
         let mut start_ids: Vec<usize> = vec![0; n];
-        let mut y: Vec<Value> = vec![];
+        let mut y: Vec<V> = vec![];
 
         // Generate binary matrix
         for (k, (i, index)) in first_one_indexes.into_iter().enumerate() {
@@ -108,36 +108,10 @@ impl RbOkvs {
     }
 }
 
-pub struct OkvsKey<const N: usize = 8>(pub [u8; N]);
-
-impl<const N: usize> Key for OkvsKey<N> {
-    /// hash1(key) -> [0, range)
-    fn hash_to_index(&self, range: usize) -> usize {
-        let v = blake2b::<16>(&self.to_bytes());
-        (u128::from_le_bytes(v) % range as u128) as usize
-    }
-
-    /// hash2(key) -> {0, 1}^band_width
-    fn hash_to_band(&self, band_width: usize) -> BitVec {
-        let v = hash(&self.0, (band_width + 7) / 8);
-        let v = BitSlice::<_, Lsb0>::from_slice(&v);
-        let v = &v[..band_width];
-
-        let mut bits: BitVec = BitVec::new();
-        for i in 0..band_width {
-            bits.push(v[i])
-        }
-        bits
-    }
-
-    fn to_bytes(&self) -> Vec<u8> {
-        self.0.into()
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::types::{OkvsKey, OkvsValue};
 
     #[test]
     fn test_okvs_key() {
@@ -152,9 +126,9 @@ mod test {
 
     #[test]
     fn test_create_sorted_matrix() {
-        let mut pairs: Vec<Pair<OkvsKey>> = vec![];
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<32>>> = vec![];
         for i in 0..20 {
-            pairs.push((OkvsKey([i; 8]), i as u64));
+            pairs.push((OkvsKey([i; 8]), OkvsValue([i; 32])));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
         let (matrix, start_indexes, _y_map) = rb_okvs.create_sorted_matrix(pairs).unwrap();
@@ -166,9 +140,9 @@ mod test {
 
     #[test]
     fn test_rb_okvs() {
-        let mut pairs: Vec<Pair<OkvsKey>> = vec![];
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<32>>> = vec![];
         for i in 0..100 {
-            pairs.push((OkvsKey([i; 8]), i as u64));
+            pairs.push((OkvsKey([i; 8]), OkvsValue([i; 32])));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
@@ -176,7 +150,7 @@ mod test {
 
         for i in 0..100 {
             let decode = rb_okvs.decode(&encode, &OkvsKey([i; 8]));
-            assert_eq!(decode, i as u64);
+            assert_eq!(decode, OkvsValue([i; 32]));
         }
     }
 }

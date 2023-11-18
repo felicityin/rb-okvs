@@ -4,13 +4,14 @@ use aes_gcm::{
 };
 use sha256::digest;
 
-use crate::types::{Encoding, Okvs, Pair, Value};
+use crate::error::{Error, Result};
+use crate::types::{EmmV, Encoding, Okvs, OkvsKey, OkvsValue, Pair};
 use crate::utils::hash;
-use crate::{error::Result, okvs::OkvsKey};
 
 type KF = [u8; 32];
 type KE = [u8; 32];
-pub const VALUE_SIZE: usize = 1;
+pub type EmmPair<K, V> = (K, V);
+pub const H_LEN: usize = 64;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -19,7 +20,7 @@ pub struct ClientState {
 }
 
 // Volume-Hiding Encrypted Multi-Maps
-pub struct VhEmm<T: Okvs> {
+pub struct VhEmm<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize> {
     okvs: T,
 }
 
@@ -32,21 +33,25 @@ impl ClientState {
     }
 }
 
-impl<T: Okvs> VhEmm<T> {
+impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
+    VhEmm<T, OKVS_K_SIZE, OKVS_V_SIZE>
+{
     pub fn new(okvs: T) -> Self {
         Self { okvs }
     }
 
-    pub fn setup(&self, input: Vec<Pair<OkvsKey>>) -> Result<(Encoding, ClientState)> {
+    pub fn setup<V: EmmV>(
+        &self,
+        input: Vec<EmmPair<u64, Vec<V>>>,
+    ) -> Result<(Encoding<OkvsValue<OKVS_V_SIZE>>, ClientState)> {
         let client_state = ClientState::default();
-        let mut new_input: Vec<Pair<OkvsKey>> = vec![];
+        let mut new_input: Vec<Pair<OkvsKey<OKVS_K_SIZE>, OkvsValue<OKVS_V_SIZE>>> = vec![];
 
-        for (key, value) in input.into_iter() {
-            let h = sha256(&client_state.kf, &key);
-            // TODO: make it general
-            for j in 0..VALUE_SIZE {
-                let k = create_key(concat(h.clone(), j));
-                let v = create_value(&client_state.ke, concat(h.clone(), value));
+        for (key, value) in input {
+            let h = sha256(&client_state.kf, key); // H_LEN = h.len()
+            for (j, v) in value.iter().enumerate() {
+                let k = create_key::<OKVS_K_SIZE>(h.clone(), j);
+                let v = encode_value::<V, OKVS_V_SIZE>(&client_state.ke, h.clone(), v);
                 new_input.push((k, v));
             }
         }
@@ -56,16 +61,21 @@ impl<T: Okvs> VhEmm<T> {
     }
 
     // TODO: split it to client's and server's
-    pub fn query(&self, key: OkvsKey, client_state: &ClientState, emm: &Encoding) -> Value {
-        let h = sha256(&client_state.kf, &key);
+    pub fn query<V: EmmV>(
+        &self,
+        key: u64,
+        v_len: usize,
+        client_state: &ClientState,
+        emm: &Encoding<OkvsValue<OKVS_V_SIZE>>,
+    ) -> Result<Vec<V>> {
+        let h = sha256(&client_state.kf, key);
 
         // TODO: send h to server
 
         // server
         let mut x = vec![];
-        // TODO: make it general
-        for i in 0..VALUE_SIZE {
-            let k = create_key(concat(h.clone(), i));
+        for i in 0..v_len {
+            let k = create_key::<OKVS_K_SIZE>(h.clone(), i);
             x.push(self.okvs.decode(emm, &k));
         }
 
@@ -73,40 +83,60 @@ impl<T: Okvs> VhEmm<T> {
 
         // client
         let mut v = vec![];
-        // TODO: make it general
-        for i in x {
-            let y = create_value(&client_state.ke, i.to_string());
+        for (i, xi) in x.into_iter().enumerate() {
+            let (dh, y) = decode_value::<V, OKVS_V_SIZE>(&client_state.ke, xi);
+            if dh != h {
+                return Err(Error::Decode(i));
+            }
             v.push(y);
         }
-        v[0]
+        Ok(v)
     }
 }
 
-fn sha256(kf: &KF, key: &OkvsKey) -> String {
+fn sha256(kf: &KF, key: u64) -> Vec<u8> {
     let mut arr = kf.to_vec();
-    arr.extend_from_slice(&key.0);
-    digest(arr)
+    arr.extend_from_slice(&key.to_le_bytes());
+    digest(arr).into_bytes()
 }
 
-fn concat<T: std::fmt::Display>(mut a: String, b: T) -> String {
-    a.push_str(&b.to_string());
-    a
-}
+fn create_key<const OKVS_K_SIZE: usize>(mut h: Vec<u8>, i: usize) -> OkvsKey<OKVS_K_SIZE> {
+    h.extend_from_slice(&i.to_le_bytes());
 
-fn create_key(s: String) -> OkvsKey {
-    let k = hash(&s.as_bytes(), 8);
-    let mut buf = [0u8; 8];
+    let k = hash(&h, OKVS_K_SIZE);
+
+    let mut buf = [0u8; OKVS_K_SIZE];
     buf.copy_from_slice(&k);
     OkvsKey(buf)
 }
 
-fn create_value(ke: &KE, e: String) -> Value {
+fn encode_value<V: EmmV, const OKVS_V_SIZE: usize>(
+    ke: &KE,
+    mut h: Vec<u8>,
+    v: &V,
+) -> OkvsValue<OKVS_V_SIZE> {
+    h.extend_from_slice(&v.encode());
+
     let key = AesKey::<Aes256Gcm>::from_slice(ke);
     let cipher = Aes256Gcm::new(key);
-    let ciphertext = cipher.encrypt(&Default::default(), e.as_bytes()).unwrap(); // TODO: randome nonce
-    let mut sum: u64 = 0;
-    ciphertext.into_iter().for_each(|e| sum += e as u64);
-    sum
+    let ciphertext = cipher.encrypt(&Default::default(), h.as_slice()).unwrap(); // TODO: randome nonce
+
+    let mut v = [0u8; OKVS_V_SIZE];
+    v.copy_from_slice(&ciphertext);
+    OkvsValue(v)
+}
+
+fn decode_value<V: EmmV, const OKVS_V_SIZE: usize>(
+    ke: &KE,
+    v: OkvsValue<OKVS_V_SIZE>,
+) -> (Vec<u8>, V) {
+    let key = AesKey::<Aes256Gcm>::from_slice(ke);
+    let cipher = Aes256Gcm::new(key);
+    let decode = cipher.encrypt(&Default::default(), v.0.as_slice()).unwrap(); // TODO: randome nonce
+    (
+        decode[..H_LEN].into(),
+        V::decode(&decode[H_LEN..H_LEN + V::len()]),
+    )
 }
 
 #[cfg(test)]
@@ -116,19 +146,108 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_rb_mm() {
-        let mut pairs: Vec<Pair<OkvsKey>> = vec![];
+    fn test_rb_mm_vu64() {
+        pub struct EmmValue(pub u64);
+
+        impl EmmV for EmmValue {
+            fn len() -> usize {
+                8
+            }
+
+            fn encode(&self) -> Vec<u8> {
+                self.0.to_le_bytes().into()
+            }
+
+            fn decode(b: &[u8]) -> Self {
+                let mut v = [0u8; 8];
+                v.copy_from_slice(b);
+                Self(u64::from_le_bytes(v))
+            }
+        }
+
+        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
         for i in 0..200 {
-            pairs.push((OkvsKey([i; 8]), i as u64));
+            pairs.push((i as u64, vec![EmmValue(i as u64)]));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
-        let rb_mm = VhEmm::new(rb_okvs);
+        // 83 = 80 + EmmValue.len()
+        let rb_mm = VhEmm::<RbOkvs, 8, 88>::new(rb_okvs);
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value = rb_mm.query(OkvsKey([i; 8]), &client_state, &emm);
-            assert_eq!(value, i as u64);
+            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            assert_eq!(value[0].0, i as u64);
+        }
+    }
+
+    #[test]
+    fn test_rb_mm_vu32() {
+        pub struct EmmValue(pub u32);
+
+        impl EmmV for EmmValue {
+            fn len() -> usize {
+                4
+            }
+
+            fn encode(&self) -> Vec<u8> {
+                self.0.to_le_bytes().into()
+            }
+
+            fn decode(b: &[u8]) -> Self {
+                let mut v = [0u8; 4];
+                v.copy_from_slice(b);
+                Self(u32::from_le_bytes(v))
+            }
+        }
+
+        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
+        for i in 0..200 {
+            pairs.push((i as u64, vec![EmmValue(i as u32)]));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+
+        // 83 = 80 + EmmValue.len()
+        let rb_mm = VhEmm::<RbOkvs, 8, 84>::new(rb_okvs);
+        let (emm, client_state) = rb_mm.setup(pairs).unwrap();
+
+        for i in 0..200 {
+            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            assert_eq!(value[0].0, i as u32);
+        }
+    }
+
+    #[test]
+    fn test_rb_mm_vstring() {
+        pub struct EmmValue(pub String);
+
+        impl EmmV for EmmValue {
+            fn len() -> usize {
+                3
+            }
+
+            fn encode(&self) -> Vec<u8> {
+                self.0.as_bytes().to_vec()
+            }
+
+            fn decode(b: &[u8]) -> Self {
+                Self(String::from_utf8(b.to_vec()).unwrap())
+            }
+        }
+
+        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
+        for i in 0..200 {
+            pairs.push((i as u64, vec![EmmValue(format!("{:03}", i))]));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+
+        // 83 = 80 + EmmValue.len()
+        let rb_mm = VhEmm::<RbOkvs, 8, 83>::new(rb_okvs);
+        let (emm, client_state) = rb_mm.setup(pairs).unwrap();
+
+        for i in 0..200 {
+            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            assert_eq!(value[0].0, format!("{:03}", i));
         }
     }
 }
