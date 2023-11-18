@@ -4,18 +4,18 @@ use bitvec::prelude::*;
 use blake2::{Blake2b512, Digest};
 
 use crate::error::{Error, Result};
-use crate::types::Value;
+use crate::types::OkvsV;
 
 /// Martin Dietzfelbinger and Stefan Walzer. Efficient Gauss Elimination for
 /// Near-Quadratic Matrices with One Short Random Block per Row, with
 /// Applications. In 27th Annual European Symposium on Algorithms (ESA 2019).
 /// Schloss Dagstuhl-Leibniz-Zentrum fuer Informatik, 2019.
-pub fn simple_gauss(
-    mut y: Vec<Value>,
+pub fn simple_gauss<V: OkvsV>(
+    mut y: Vec<V>,
     mut matrix: Vec<BitVec>,
     start_indexes: Vec<usize>,
     band_width: usize,
-) -> Result<Vec<u64>> {
+) -> Result<Vec<V>> {
     let rows = matrix.len();
     assert!(rows > 0);
     assert_eq!(rows, start_indexes.len());
@@ -29,7 +29,7 @@ pub fn simple_gauss(
                 for k in (i + 1)..rows {
                     if start_indexes[k] <= pivot[i] && matrix[k][pivot[i]] {
                         matrix[k] = matrix[k].clone() ^ &matrix[i];
-                        y[k] ^= y[i];
+                        y[k] = y[k].xor(&y[i]);
                     }
                 }
                 break;
@@ -42,19 +42,19 @@ pub fn simple_gauss(
     }
 
     // back subsitution
-    let mut x = vec![0u64; cols]; // solution to Ax = y
+    let mut x = vec![V::default(); cols]; // solution to Ax = y
     for i in (0..rows).rev() {
-        x[pivot[i]] = inner_product(&matrix[i], &x) ^ y[i];
+        x[pivot[i]] = inner_product::<V>(&matrix[i], &x).xor(&y[i]);
     }
     Ok(x)
 }
 
-pub fn inner_product(m: &BitVec, x: &[Value]) -> Value {
+pub fn inner_product<V: OkvsV>(m: &BitVec, x: &[V]) -> V {
     assert_eq!(m.len(), x.len());
-    let mut result = 0u64;
+    let mut result = V::default();
     for i in 0..m.len() {
-        if m[i] && x[i] != 0 {
-            result ^= x[i]
+        if m[i] && !x[i].is_zero() {
+            result = result.xor(&x[i]);
         }
     }
     result
@@ -109,6 +109,7 @@ pub fn first_one_index(bits: &BitVec) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::types::OkvsValue;
 
     #[test]
     fn test_gaussian() {
@@ -118,9 +119,13 @@ mod test {
         matrix.push(bitvec![0, 0, 1, 1]);
 
         let start_indexes = vec![0, 1, 2];
-        let y = vec![0, 1, 2];
+        let y = vec![
+            OkvsValue([0u8; 32]),
+            OkvsValue([1u8; 32]),
+            OkvsValue([2u8; 32]),
+        ];
 
-        let x = simple_gauss(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
+        let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
 
         assert_eq!(inner_product(&matrix[0], &x), y[0]);
         assert_eq!(inner_product(&matrix[1], &x), y[1]);
@@ -129,9 +134,13 @@ mod test {
 
     #[test]
     fn test_inner_product() {
-        let a = bitvec![1, 1, 0, 0];
-        let b = vec![1, 1, 0, 0];
-        assert_eq!(0, inner_product(&a, &b));
+        let a = bitvec![1, 1, 0];
+        let b = vec![
+            OkvsValue([0u8; 32]),
+            OkvsValue([0u8; 32]),
+            OkvsValue([0u8; 32]),
+        ];
+        assert!(inner_product(&a, &b).is_zero());
     }
 
     #[test]
