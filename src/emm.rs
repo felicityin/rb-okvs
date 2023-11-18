@@ -48,7 +48,7 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
         let mut new_input: Vec<Pair<OkvsKey<OKVS_K_SIZE>, OkvsValue<OKVS_V_SIZE>>> = vec![];
 
         for (key, value) in input {
-            let h = sha256(&client_state.kf, key); // H_LEN = h.len()
+            let h = calc_h(&client_state.kf, key); // H_LEN = h.len()
             for (j, v) in value.iter().enumerate() {
                 let k = create_key::<OKVS_K_SIZE>(h.clone(), j);
                 let v = encode_value::<V, OKVS_V_SIZE>(&client_state.ke, h.clone(), v);
@@ -60,30 +60,32 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
         Ok((emm, client_state))
     }
 
-    // TODO: split it to client's and server's
-    pub fn query<V: EmmV>(
+    // server
+    pub fn response(
         &self,
-        key: u64,
         v_len: usize,
-        client_state: &ClientState,
+        h: Vec<u8>,
         emm: &Encoding<OkvsValue<OKVS_V_SIZE>>,
-    ) -> Result<Vec<V>> {
-        let h = sha256(&client_state.kf, key);
-
-        // TODO: send h to server
-
-        // server
+    ) -> Vec<OkvsValue<OKVS_V_SIZE>> {
         let mut x = vec![];
         for i in 0..v_len {
             let k = create_key::<OKVS_K_SIZE>(h.clone(), i);
             x.push(self.okvs.decode(emm, &k));
         }
+        x
+    }
 
-        // TODO: send x to client
+    // client
+    pub fn decode<V: EmmV>(
+        &self,
+        key: u64,
+        response: Vec<OkvsValue<OKVS_V_SIZE>>,
+        client_state: &ClientState,
+    ) -> Result<Vec<V>> {
+        let h = calc_h(&client_state.kf, key);
 
-        // client
         let mut v = vec![];
-        for (i, xi) in x.into_iter().enumerate() {
+        for (i, xi) in response.into_iter().enumerate() {
             let (dh, y) = decode_value::<V, OKVS_V_SIZE>(&client_state.ke, xi);
             if dh != h {
                 return Err(Error::Decode(i));
@@ -92,9 +94,22 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
         }
         Ok(v)
     }
+
+    // Just for test
+    pub fn query<V: EmmV>(
+        &self,
+        key: u64,
+        v_len: usize,
+        client_state: &ClientState,
+        emm: &Encoding<OkvsValue<OKVS_V_SIZE>>,
+    ) -> Result<Vec<V>> {
+        let h = calc_h(&client_state.kf, key);
+        let response = self.response(v_len, h, emm);
+        self.decode(key, response, client_state)
+    }
 }
 
-fn sha256(kf: &KF, key: u64) -> Vec<u8> {
+fn calc_h(kf: &KF, key: u64) -> Vec<u8> {
     let mut arr = kf.to_vec();
     arr.extend_from_slice(&key.to_le_bytes());
     digest(arr).into_bytes()
@@ -207,7 +222,7 @@ mod test {
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
-        // 83 = 80 + EmmValue.len()
+        // 84 = 80 + EmmValue.len()
         let rb_mm = VhEmm::<RbOkvs, 8, 84>::new(rb_okvs);
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
