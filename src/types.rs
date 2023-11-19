@@ -6,6 +6,10 @@ use crate::utils::*;
 pub type Encoding<T> = Vec<T>;
 pub type Pair<K, V> = (K, V);
 
+pub trait EmmK {
+    fn to_bytes(&self) -> Vec<u8>;
+}
+
 pub trait EmmV {
     fn len() -> usize;
     fn encode(&self) -> Vec<u8>;

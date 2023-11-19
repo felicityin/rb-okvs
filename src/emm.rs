@@ -5,7 +5,7 @@ use aes_gcm::{
 use sha256::digest;
 
 use crate::error::{Error, Result};
-use crate::types::{EmmV, Encoding, Okvs, OkvsKey, OkvsValue, Pair};
+use crate::types::{EmmK, EmmV, Encoding, Okvs, OkvsKey, OkvsValue, Pair};
 use crate::utils::hash;
 
 type KF = [u8; 32];
@@ -40,15 +40,15 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
         Self { okvs }
     }
 
-    pub fn setup<V: EmmV>(
+    pub fn setup<K: EmmK, V: EmmV>(
         &self,
-        input: Vec<EmmPair<u64, Vec<V>>>,
+        input: Vec<EmmPair<K, Vec<V>>>,
     ) -> Result<(Encoding<OkvsValue<OKVS_V_SIZE>>, ClientState)> {
         let client_state = ClientState::default();
         let mut new_input: Vec<Pair<OkvsKey<OKVS_K_SIZE>, OkvsValue<OKVS_V_SIZE>>> = vec![];
 
         for (key, value) in input {
-            let h = calc_h(&client_state.kf, key); // H_LEN = h.len()
+            let h = calc_h(&client_state.kf, &key); // H_LEN = h.len()
             for (j, v) in value.iter().enumerate() {
                 let k = create_key::<OKVS_K_SIZE>(h.clone(), j);
                 let v = encode_value::<V, OKVS_V_SIZE>(&client_state.ke, h.clone(), v);
@@ -58,6 +58,20 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
 
         let emm = self.okvs.encode(new_input)?;
         Ok((emm, client_state))
+    }
+
+    // Just for test
+    #[allow(unused)]
+    fn query<K: EmmK, V: EmmV>(
+        &self,
+        key: K,
+        v_len: usize,
+        client_state: &ClientState,
+        emm: &Encoding<OkvsValue<OKVS_V_SIZE>>,
+    ) -> Result<Vec<V>> {
+        let h = calc_h(&client_state.kf, &key);
+        let response = self.response(v_len, h, emm);
+        self.decode(key, response, client_state)
     }
 
     // server
@@ -76,13 +90,13 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
     }
 
     // client
-    pub fn decode<V: EmmV>(
+    pub fn decode<K: EmmK, V: EmmV>(
         &self,
-        key: u64,
+        key: K,
         response: Vec<OkvsValue<OKVS_V_SIZE>>,
         client_state: &ClientState,
     ) -> Result<Vec<V>> {
-        let h = calc_h(&client_state.kf, key);
+        let h = calc_h(&client_state.kf, &key);
 
         let mut v = vec![];
         for (i, xi) in response.into_iter().enumerate() {
@@ -94,24 +108,11 @@ impl<T: Okvs, const OKVS_K_SIZE: usize, const OKVS_V_SIZE: usize>
         }
         Ok(v)
     }
-
-    // Just for test
-    pub fn query<V: EmmV>(
-        &self,
-        key: u64,
-        v_len: usize,
-        client_state: &ClientState,
-        emm: &Encoding<OkvsValue<OKVS_V_SIZE>>,
-    ) -> Result<Vec<V>> {
-        let h = calc_h(&client_state.kf, key);
-        let response = self.response(v_len, h, emm);
-        self.decode(key, response, client_state)
-    }
 }
 
-fn calc_h(kf: &KF, key: u64) -> Vec<u8> {
+fn calc_h<K: EmmK>(kf: &KF, key: &K) -> Vec<u8> {
     let mut arr = kf.to_vec();
-    arr.extend_from_slice(&key.to_le_bytes());
+    arr.extend_from_slice(&key.to_bytes());
     digest(arr).into_bytes()
 }
 
@@ -162,7 +163,15 @@ mod test {
 
     #[test]
     fn test_rb_mm_vu64() {
-        pub struct EmmValue(pub u64);
+        struct EmmKey(pub u64);
+
+        impl EmmK for EmmKey {
+            fn to_bytes(&self) -> Vec<u8> {
+                self.0.to_le_bytes().into()
+            }
+        }
+
+        struct EmmValue(pub u64);
 
         impl EmmV for EmmValue {
             fn len() -> usize {
@@ -180,9 +189,9 @@ mod test {
             }
         }
 
-        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
+        let mut pairs: Vec<EmmPair<EmmKey, Vec<EmmValue>>> = vec![];
         for i in 0..200 {
-            pairs.push((i as u64, vec![EmmValue(i as u64)]));
+            pairs.push((EmmKey(i as u64), vec![EmmValue(i as u64)]));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
@@ -191,14 +200,24 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey(i as u64), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, i as u64);
         }
     }
 
     #[test]
     fn test_rb_mm_vu32() {
-        pub struct EmmValue(pub u32);
+        struct EmmKey(pub [u8; 8]);
+
+        impl EmmK for EmmKey {
+            fn to_bytes(&self) -> Vec<u8> {
+                self.0.into()
+            }
+        }
+
+        struct EmmValue(pub u32);
 
         impl EmmV for EmmValue {
             fn len() -> usize {
@@ -216,9 +235,9 @@ mod test {
             }
         }
 
-        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
+        let mut pairs: Vec<EmmPair<EmmKey, Vec<EmmValue>>> = vec![];
         for i in 0..200 {
-            pairs.push((i as u64, vec![EmmValue(i as u32)]));
+            pairs.push((EmmKey([i as u8; 8]), vec![EmmValue(i as u32)]));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
@@ -227,14 +246,24 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey([i as u8; 8]), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, i as u32);
         }
     }
 
     #[test]
     fn test_rb_mm_vstring() {
-        pub struct EmmValue(pub String);
+        struct EmmKey(pub u32);
+
+        impl EmmK for EmmKey {
+            fn to_bytes(&self) -> Vec<u8> {
+                self.0.to_le_bytes().into()
+            }
+        }
+
+        struct EmmValue(pub String);
 
         impl EmmV for EmmValue {
             fn len() -> usize {
@@ -250,9 +279,9 @@ mod test {
             }
         }
 
-        let mut pairs: Vec<EmmPair<u64, Vec<EmmValue>>> = vec![];
+        let mut pairs: Vec<EmmPair<EmmKey, Vec<EmmValue>>> = vec![];
         for i in 0..200 {
-            pairs.push((i as u64, vec![EmmValue(format!("{:03}", i))]));
+            pairs.push((EmmKey(i as u32), vec![EmmValue(format!("{:03}", i))]));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
 
@@ -261,7 +290,9 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(i as u64, 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey(i as u32), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, format!("{:03}", i));
         }
     }

@@ -1,3 +1,5 @@
+#![feature(test)]
+
 pub mod emm;
 pub mod error;
 pub mod okvs;
