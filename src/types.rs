@@ -32,15 +32,17 @@ pub trait OkvsV: Clone {
     fn default() -> Self;
     fn is_zero(&self) -> bool;
     fn xor(&self, other: &Self) -> Self;
+    fn in_place_xor(&mut self, other: &Self);
 }
 
+#[derive(Clone)]
 pub struct OkvsKey<const N: usize = 8>(pub [u8; N]);
 
 impl<const N: usize> OkvsK for OkvsKey<N> {
     /// hash1(key) -> [0, range)
     fn hash_to_index(&self, range: usize) -> usize {
-        let v = blake2b::<16>(&self.to_bytes());
-        (u128::from_le_bytes(v) % range as u128) as usize
+        let v = blake2b::<8>(&self.to_bytes());
+        usize::from_le_bytes(v) % range
     }
 
     /// hash2(key) -> {0, 1}^band_width
@@ -87,5 +89,13 @@ impl<const N: usize> OkvsV for OkvsValue<N> {
             result[i] = item ^ other.0[i];
         }
         Self(result)
+    }
+
+    fn in_place_xor(&mut self, other: &Self) {
+        assert_eq!(self.0.len(), other.0.len());
+
+        for i in 0..self.0.len() {
+            self.0[i] ^= other.0[i];
+        }
     }
 }

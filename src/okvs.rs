@@ -44,7 +44,7 @@ impl Okvs for RbOkvs {
     fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
         let start = key.hash_to_index(self.columns - self.band_width);
         let band = key.hash_to_band(self.band_width);
-        inner_product(&self.create_row(start, &band), encoding)
+        inner_product(&band, encoding, start)
     }
 }
 
@@ -160,9 +160,25 @@ mod tests {
     }
 
     #[bench]
-    fn bench_rb_okvs(b: &mut test::Bencher) {
+    fn bench_encode(b: &mut test::Bencher) {
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..100 {
+        for i in 0..1000 {
+            pairs.push((
+                OkvsKey((i as usize).to_le_bytes()),
+                OkvsValue((i as u8).to_le_bytes()),
+            ));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+
+        b.iter(|| {
+            rb_okvs.encode(pairs.clone()).unwrap();
+        });
+    }
+
+    #[bench]
+    fn bench_decode(b: &mut test::Bencher) {
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
+        for i in 0..1000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
@@ -173,8 +189,32 @@ mod tests {
         let encode = rb_okvs.encode(pairs).unwrap();
 
         b.iter(|| {
-            for i in 0..100 {
+            for i in 0..1000 {
                 rb_okvs.decode(&encode, &OkvsKey((i as u8).to_le_bytes()));
+            }
+        });
+    }
+
+    #[bench]
+    fn bench_bitarr(b: &mut test::Bencher) {
+        let mut a = bitarr![0; 16384];
+        let c = bitarr![1; 16384];
+
+        b.iter(|| {
+            for _ in 0..16384 {
+                a ^= c;
+            }
+        });
+    }
+
+    #[bench]
+    fn bench_bitvec(b: &mut test::Bencher) {
+        let mut a = bitvec![0; 16384];
+        let c = bitvec![1; 16384];
+
+        b.iter(|| {
+            for _ in 0..16384 {
+                a ^= &c;
             }
         });
     }

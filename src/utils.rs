@@ -23,13 +23,16 @@ pub fn simple_gauss<V: OkvsV>(
 
     let mut pivot: Vec<usize> = vec![usize::MAX; rows];
     for i in 0..rows {
+        let row_i = matrix[i].clone();
+        let y_i = y[i].clone();
+
         for j in start_indexes[i]..min(start_indexes[i] + band_width, cols) {
             if matrix[i][j] {
                 pivot[i] = j;
                 for k in (i + 1)..rows {
                     if start_indexes[k] <= pivot[i] && matrix[k][pivot[i]] {
-                        matrix[k] = matrix[k].clone() ^ &matrix[i];
-                        y[k] = y[k].xor(&y[i]);
+                        matrix[k] ^= &row_i;
+                        y[k].in_place_xor(&y_i);
                     }
                 }
                 break;
@@ -44,17 +47,18 @@ pub fn simple_gauss<V: OkvsV>(
     // back subsitution
     let mut x = vec![V::default(); cols]; // solution to Ax = y
     for i in (0..rows).rev() {
-        x[pivot[i]] = inner_product::<V>(&matrix[i], &x).xor(&y[i]);
+        let start = start_indexes[i];
+        let end = min(start + band_width, cols);
+        x[pivot[i]] = inner_product::<V>(&matrix[i][start..end], &x, start).xor(&y[i]);
     }
     Ok(x)
 }
 
-pub fn inner_product<V: OkvsV>(m: &BitVec, x: &[V]) -> V {
-    assert_eq!(m.len(), x.len());
+pub fn inner_product<V: OkvsV>(m: &BitSlice, x: &[V], start: usize) -> V {
     let mut result = V::default();
     for i in 0..m.len() {
-        if m[i] && !x[i].is_zero() {
-            result = result.xor(&x[i]);
+        if m[i] {
+            result.in_place_xor(&x[start + i]);
         }
     }
     result
@@ -127,9 +131,9 @@ mod test {
 
         let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
 
-        assert_eq!(inner_product(&matrix[0], &x), y[0]);
-        assert_eq!(inner_product(&matrix[1], &x), y[1]);
-        assert_eq!(inner_product(&matrix[2], &x), y[2]);
+        assert_eq!(inner_product(&matrix[0], &x, 0), y[0]);
+        assert_eq!(inner_product(&matrix[1], &x, 0), y[1]);
+        assert_eq!(inner_product(&matrix[2], &x, 0), y[2]);
     }
 
     #[test]
@@ -140,7 +144,7 @@ mod test {
             OkvsValue([0u8; 32]),
             OkvsValue([0u8; 32]),
         ];
-        assert!(inner_product(&a, &b).is_zero());
+        assert!(inner_product(&a, &b, 0).is_zero());
     }
 
     #[test]
