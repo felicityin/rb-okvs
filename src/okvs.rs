@@ -10,7 +10,7 @@ use crate::utils::*;
 /// choices of ϵ such as 0.03-0.05 In contrast, if one wishes for an
 /// instantiation of RB-OKVS with fast encoding/decoding times, then one can
 /// pick larger values of ϵ such as 0.07-0.1.
-pub const EPSILON: f64 = 0.05;
+pub const EPSILON: f64 = 0.1;
 pub const LAMBDA: usize = 40;
 
 /// RB-OKVS, Oblivious Key-Value Stores
@@ -22,11 +22,15 @@ pub struct RbOkvs {
 impl RbOkvs {
     pub fn new(kv_count: usize) -> RbOkvs {
         let columns = ((1.0 + EPSILON) * kv_count as f64) as usize;
-        let band_width = columns * 40 / 100; // todo
+        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize;
 
         Self {
             columns,
-            band_width,
+            band_width: if band_width < columns {
+                band_width
+            } else {
+                columns * 40 / 100
+            },
         }
     }
 }
@@ -109,9 +113,10 @@ impl RbOkvs {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::types::{OkvsKey, OkvsValue};
+    extern crate test;
 
     #[test]
     fn test_okvs_key() {
@@ -152,5 +157,25 @@ mod test {
             let decode = rb_okvs.decode(&encode, &OkvsKey([i; 8]));
             assert_eq!(decode, OkvsValue([i; 32]));
         }
+    }
+
+    #[bench]
+    fn bench_rb_okvs(b: &mut test::Bencher) {
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
+        for i in 0..100 {
+            pairs.push((
+                OkvsKey((i as usize).to_le_bytes()),
+                OkvsValue((i as u8).to_le_bytes()),
+            ));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+
+        let encode = rb_okvs.encode(pairs).unwrap();
+
+        b.iter(|| {
+            for i in 0..100 {
+                rb_okvs.decode(&encode, &OkvsKey((i as u8).to_le_bytes()));
+            }
+        });
     }
 }

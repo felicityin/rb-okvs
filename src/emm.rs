@@ -200,7 +200,9 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(EmmKey(i as u64), 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey(i as u64), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, i as u64);
         }
     }
@@ -244,7 +246,9 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(EmmKey([i as u8; 8]), 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey([i as u8; 8]), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, i as u32);
         }
     }
@@ -286,7 +290,9 @@ mod test {
         let (emm, client_state) = rb_mm.setup(pairs).unwrap();
 
         for i in 0..200 {
-            let value: Vec<EmmValue> = rb_mm.query(EmmKey(i as u32), 1, &client_state, &emm).unwrap();
+            let value: Vec<EmmValue> = rb_mm
+                .query(EmmKey(i as u32), 1, &client_state, &emm)
+                .unwrap();
             assert_eq!(value[0].0, format!("{:03}", i));
         }
     }
