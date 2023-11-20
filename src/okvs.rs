@@ -22,7 +22,7 @@ pub struct RbOkvs {
 impl RbOkvs {
     pub fn new(kv_count: usize) -> RbOkvs {
         let columns = ((1.0 + EPSILON) * kv_count as f64) as usize;
-        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize;
+        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize; // 205
 
         Self {
             columns,
@@ -38,7 +38,14 @@ impl RbOkvs {
 impl Okvs for RbOkvs {
     fn encode<K: OkvsK, V: OkvsV>(&self, input: Vec<Pair<K, V>>) -> Result<Encoding<V>> {
         let (matrix, start_pos, first_one_pos, y) = self.create_sorted_matrix(input)?;
-        simple_gauss::<V>(y, matrix, start_pos, first_one_pos, self.band_width, self.columns)
+        simple_gauss::<V>(
+            y,
+            matrix,
+            start_pos,
+            first_one_pos,
+            self.band_width,
+            self.columns,
+        )
     }
 
     fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
@@ -86,16 +93,13 @@ impl RbOkvs {
         let mut y: Vec<V> = vec![];
 
         // Generate binary matrix
-        for (k, (i, index)) in first_one_pos.into_iter().enumerate() {
-            let start = start_pos.get(&i).unwrap();
-            let band = bands.get(&i).unwrap().to_owned();
+        for (k, (i, first_one)) in first_one_pos.into_iter().enumerate() {
+            matrix.push(bands.get(&i).unwrap().to_owned());
 
-            // matrix.push(self.create_row(start, band));
-            matrix.push(band);
             y.push(y_map.get(&i).unwrap().to_owned());
 
-            start_ids[k] = *start;
-            first_one_ids[k] = index;
+            start_ids[k] = *start_pos.get(&i).unwrap();
+            first_one_ids[k] = first_one;
         }
 
         Ok((matrix, start_ids, first_one_ids, y))

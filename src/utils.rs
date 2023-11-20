@@ -30,7 +30,7 @@ pub fn simple_gauss<V: OkvsV>(
                 for k in (i + 1)..rows {
                     if first_one_pos[k] <= pivot[i] && bands[k][pivot[i] - start_pos[k]] {
                         bands[k] = bxor(
-                            &bands[i][j - start_pos[i] ..],
+                            &bands[i][j - start_pos[i]..],
                             &bands[k],
                             pivot[i] - start_pos[k],
                         );
