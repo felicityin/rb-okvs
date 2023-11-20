@@ -1,5 +1,3 @@
-use std::cmp::min;
-
 use bitvec::prelude::*;
 use blake2::{Blake2b512, Digest};
 
@@ -12,32 +10,37 @@ use crate::types::OkvsV;
 /// Schloss Dagstuhl-Leibniz-Zentrum fuer Informatik, 2019.
 pub fn simple_gauss<V: OkvsV>(
     mut y: Vec<V>,
-    mut matrix: Vec<BitVec>,
-    start_indexes: Vec<usize>,
+    mut bands: Vec<BitVec>,
+    start_pos: Vec<usize>,
+    first_one_pos: Vec<usize>,
     band_width: usize,
+    cols: usize,
 ) -> Result<Vec<V>> {
-    let rows = matrix.len();
-    assert!(rows > 0);
-    assert_eq!(rows, start_indexes.len());
-    let cols = matrix[0].len();
-
+    let rows = bands.len();
+    assert_eq!(rows, start_pos.len());
+    assert_eq!(rows, y.len());
     let mut pivot: Vec<usize> = vec![usize::MAX; rows];
+
     for i in 0..rows {
-        let row_i = matrix[i].clone();
         let y_i = y[i].clone();
 
-        for j in start_indexes[i]..min(start_indexes[i] + band_width, cols) {
-            if matrix[i][j] {
+        for j in first_one_pos[i]..start_pos[i] + band_width {
+            if bands[i][j - start_pos[i]] {
                 pivot[i] = j;
                 for k in (i + 1)..rows {
-                    if start_indexes[k] <= pivot[i] && matrix[k][pivot[i]] {
-                        matrix[k] ^= &row_i;
+                    if first_one_pos[k] <= pivot[i] && bands[k][pivot[i] - start_pos[k]] {
+                        bands[k] = bxor(
+                            &bands[i][j - start_pos[i] ..],
+                            &bands[k],
+                            pivot[i] - start_pos[k],
+                        );
                         y[k].in_place_xor(&y_i);
                     }
                 }
                 break;
             }
         }
+
         if pivot[i] == usize::MAX {
             // row i is 0
             return Err(Error::ZeroRow(i));
@@ -47,11 +50,35 @@ pub fn simple_gauss<V: OkvsV>(
     // back subsitution
     let mut x = vec![V::default(); cols]; // solution to Ax = y
     for i in (0..rows).rev() {
-        let start = start_indexes[i];
-        let end = min(start + band_width, cols);
-        x[pivot[i]] = inner_product::<V>(&matrix[i][start..end], &x, start).xor(&y[i]);
+        x[pivot[i]] = inner_product::<V>(&bands[i], &x, start_pos[i]).xor(&y[i]);
     }
     Ok(x)
+}
+
+fn bxor(a: &BitSlice, b: &BitVec, start_b: usize) -> BitVec {
+    let mut c = bitvec![];
+
+    if start_b > 0 {
+        c.extend(&b[..start_b]);
+    }
+
+    let mut i = 0;
+    let mut j = start_b;
+
+    while i < a.len() && j < b.len() {
+        c.push(a[i] ^ b[j]);
+        i += 1;
+        j += 1;
+    }
+
+    if j < b.len() {
+        c.extend(&b[j..]);
+    }
+
+    if i < a.len() {
+        c.extend(&a[i..]);
+    }
+    c
 }
 
 pub fn inner_product<V: OkvsV>(m: &BitSlice, x: &[V], start: usize) -> V {
@@ -118,22 +145,32 @@ mod test {
     #[test]
     fn test_gaussian() {
         let mut matrix = vec![];
-        matrix.push(bitvec![1, 1, 0, 0]);
-        matrix.push(bitvec![0, 1, 1, 0]);
-        matrix.push(bitvec![0, 0, 1, 1]);
+        matrix.push(bitvec![1, 1]);
+        matrix.push(bitvec![1, 1]);
+        matrix.push(bitvec![1, 1]);
 
-        let start_indexes = vec![0, 1, 2];
+        let start_pos = vec![0, 1, 2];
+        let first_one_pos = vec![0, 1, 2];
+
         let y = vec![
             OkvsValue([0u8; 32]),
             OkvsValue([1u8; 32]),
             OkvsValue([2u8; 32]),
         ];
 
-        let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_indexes, 2).unwrap();
+        let x = simple_gauss::<OkvsValue<32>>(
+            y.clone(),
+            matrix.clone(),
+            start_pos,
+            first_one_pos,
+            2,
+            4,
+        )
+        .unwrap();
 
         assert_eq!(inner_product(&matrix[0], &x, 0), y[0]);
-        assert_eq!(inner_product(&matrix[1], &x, 0), y[1]);
-        assert_eq!(inner_product(&matrix[2], &x, 0), y[2]);
+        assert_eq!(inner_product(&matrix[1], &x, 1), y[1]);
+        assert_eq!(inner_product(&matrix[2], &x, 2), y[2]);
     }
 
     #[test]

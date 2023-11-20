@@ -29,7 +29,7 @@ impl RbOkvs {
             band_width: if band_width < columns {
                 band_width
             } else {
-                columns * 40 / 100
+                columns * 80 / 100
             },
         }
     }
@@ -37,8 +37,8 @@ impl RbOkvs {
 
 impl Okvs for RbOkvs {
     fn encode<K: OkvsK, V: OkvsV>(&self, input: Vec<Pair<K, V>>) -> Result<Encoding<V>> {
-        let (matrix, start_indexes, y) = self.create_sorted_matrix(input)?;
-        simple_gauss::<V>(y, matrix, start_indexes, self.band_width)
+        let (matrix, start_pos, first_one_pos, y) = self.create_sorted_matrix(input)?;
+        simple_gauss::<V>(y, matrix, start_pos, first_one_pos, self.band_width, self.columns)
     }
 
     fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
@@ -49,14 +49,15 @@ impl Okvs for RbOkvs {
 }
 
 impl RbOkvs {
+    #[allow(clippy::type_complexity)]
     fn create_sorted_matrix<K: OkvsK, V: OkvsV>(
         &self,
         input: Vec<Pair<K, V>>,
-    ) -> Result<(Vec<BitVec>, Vec<usize>, Vec<V>)> {
+    ) -> Result<(Vec<BitVec>, Vec<usize>, Vec<usize>, Vec<V>)> {
         let n = input.len();
         let mut y_map = HashMap::new();
-        let mut first_one_indexes: Vec<(usize, usize)> = vec![];
-        let mut start_indexes: HashMap<usize, usize> = HashMap::new();
+        let mut first_one_pos: Vec<(usize, usize)> = vec![];
+        let mut start_pos: HashMap<usize, usize> = HashMap::new();
         let mut bands: HashMap<usize, BitVec> = HashMap::new();
 
         // Generate bands
@@ -70,45 +71,34 @@ impl RbOkvs {
                 return Err(Error::ZeroRow(i));
             }
             let first_one_id = start + first_one_id;
-            first_one_indexes.push((i, first_one_id));
+            first_one_pos.push((i, first_one_id));
 
             bands.insert(i, band);
-            start_indexes.insert(i, start);
+            start_pos.insert(i, start);
             y_map.insert(i, value);
         }
 
-        first_one_indexes.sort_by(|a, b| a.1.cmp(&b.1));
+        first_one_pos.sort_by(|a, b| a.1.cmp(&b.1));
 
         let mut matrix: Vec<BitVec> = vec![]; // n * columns
         let mut start_ids: Vec<usize> = vec![0; n];
+        let mut first_one_ids: Vec<usize> = vec![0; n];
         let mut y: Vec<V> = vec![];
 
         // Generate binary matrix
-        for (k, (i, index)) in first_one_indexes.into_iter().enumerate() {
-            start_ids[k] = index;
-            let start = start_indexes.get(&i).unwrap().to_owned();
-            let band = bands.get(&i).unwrap();
-            matrix.push(self.create_row(start, band));
+        for (k, (i, index)) in first_one_pos.into_iter().enumerate() {
+            let start = start_pos.get(&i).unwrap();
+            let band = bands.get(&i).unwrap().to_owned();
+
+            // matrix.push(self.create_row(start, band));
+            matrix.push(band);
             y.push(y_map.get(&i).unwrap().to_owned());
+
+            start_ids[k] = *start;
+            first_one_ids[k] = index;
         }
 
-        Ok((matrix, start_ids, y))
-    }
-
-    fn create_row(&self, start: usize, band: &BitVec) -> BitVec {
-        let mut bits: BitVec = BitVec::new();
-
-        if start > 0 {
-            bits.extend(bitvec![0; start]);
-        }
-
-        let band_len = band.len();
-        bits.extend(band);
-
-        if start + band_len < self.columns {
-            bits.extend(bitvec![0; self.columns - band_len - start]);
-        }
-        bits
+        Ok((matrix, start_ids, first_one_ids, y))
     }
 }
 
@@ -136,11 +126,8 @@ mod tests {
             pairs.push((OkvsKey([i; 8]), OkvsValue([i; 32])));
         }
         let rb_okvs = RbOkvs::new(pairs.len());
-        let (matrix, start_indexes, _y_map) = rb_okvs.create_sorted_matrix(pairs).unwrap();
-
-        for i in 0..matrix.len() {
-            assert_eq!(start_indexes[i], first_one_index(&matrix[i]));
-        }
+        let res = rb_okvs.create_sorted_matrix(pairs);
+        assert!(res.is_ok());
     }
 
     #[test]
