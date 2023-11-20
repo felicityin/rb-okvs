@@ -1,4 +1,4 @@
-use bitvec::prelude::*;
+use sp_core::U256;
 
 use crate::error::Result;
 use crate::utils::*;
@@ -24,7 +24,7 @@ pub trait Okvs {
 
 pub trait OkvsK {
     fn hash_to_index(&self, range: usize) -> usize;
-    fn hash_to_band(&self, band_width: usize) -> BitVec;
+    fn hash_to_band(&self, band_width: usize) -> U256;
     fn to_bytes(&self) -> Vec<u8>;
 }
 
@@ -46,17 +46,9 @@ impl<const N: usize> OkvsK for OkvsKey<N> {
     }
 
     /// hash2(key) -> {0, 1}^band_width
-    fn hash_to_band(&self, band_width: usize) -> BitVec {
+    fn hash_to_band(&self, band_width: usize) -> U256 {
         let v = hash(&self.0, (band_width + 7) / 8);
-        let v = BitSlice::<_, Lsb0>::from_slice(&v);
-        let v = &v[..band_width];
-
-        let mut bits: BitVec = BitVec::new();
-
-        for i in 0..band_width {
-            bits.push(v[i])
-        }
-        bits
+        U256::from_little_endian(&v) & (U256::MAX << (256 - band_width)) >> (256 - band_width)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
