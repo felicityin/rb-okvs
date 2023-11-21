@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitvec::prelude::*;
+use sp_core::U256;
 
 use crate::error::{Error, Result};
 use crate::types::{Encoding, Okvs, OkvsK, OkvsV, Pair};
@@ -60,12 +60,12 @@ impl RbOkvs {
     fn create_sorted_matrix<K: OkvsK, V: OkvsV>(
         &self,
         input: Vec<Pair<K, V>>,
-    ) -> Result<(Vec<BitVec>, Vec<usize>, Vec<usize>, Vec<V>)> {
+    ) -> Result<(Vec<U256>, Vec<usize>, Vec<usize>, Vec<V>)> {
         let n = input.len();
         let mut y_map = HashMap::new();
         let mut first_one_pos: Vec<(usize, usize)> = vec![];
         let mut start_pos: HashMap<usize, usize> = HashMap::new();
-        let mut bands: HashMap<usize, BitVec> = HashMap::new();
+        let mut bands: HashMap<usize, U256> = HashMap::new();
 
         // Generate bands
         for (i, (key, value)) in input.into_iter().enumerate() {
@@ -73,7 +73,7 @@ impl RbOkvs {
             let start = key.hash_to_index(self.columns - self.band_width);
 
             let first_one_id = first_one_index(&band);
-            if first_one_id == band.len() {
+            if first_one_id == 256 {
                 // All elements are 0
                 return Err(Error::ZeroRow(i));
             }
@@ -87,7 +87,7 @@ impl RbOkvs {
 
         first_one_pos.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let mut matrix: Vec<BitVec> = vec![]; // n * columns
+        let mut matrix: Vec<U256> = vec![]; // n * columns
         let mut start_ids: Vec<usize> = vec![0; n];
         let mut first_one_ids: Vec<usize> = vec![0; n];
         let mut y: Vec<V> = vec![];
@@ -110,6 +110,7 @@ impl RbOkvs {
 mod tests {
     use super::*;
     use crate::types::{OkvsKey, OkvsValue};
+    use bitvec::prelude::*;
     extern crate test;
 
     #[test]
@@ -120,7 +121,7 @@ mod tests {
         assert!(pos < 30);
 
         let band = key.hash_to_band(10);
-        assert_eq!(band.len(), 10);
+        assert_eq!(band.bits(), 10);
     }
 
     #[test]
@@ -151,9 +152,50 @@ mod tests {
     }
 
     #[bench]
-    fn bench_encode(b: &mut test::Bencher) {
+    fn bench_create_sorted_matrix(b: &mut test::Bencher) {
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
         for i in 0..1000 {
+            pairs.push((
+                OkvsKey((i as usize).to_le_bytes()),
+                OkvsValue((i as u8).to_le_bytes()),
+            ));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+
+        b.iter(|| {
+            rb_okvs.create_sorted_matrix(pairs.clone()).unwrap();
+        });
+    }
+
+    #[bench]
+    fn bench_simple_gauss(b: &mut test::Bencher) {
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
+        for i in 0..1000 {
+            pairs.push((
+                OkvsKey((i as usize).to_le_bytes()),
+                OkvsValue((i as u8).to_le_bytes()),
+            ));
+        }
+        let rb_okvs = RbOkvs::new(pairs.len());
+        let (matrix, start_pos, first_one_pos, y) = rb_okvs.create_sorted_matrix(pairs).unwrap();
+
+        b.iter(|| {
+            simple_gauss::<OkvsValue<1>>(
+                y.clone(),
+                matrix.clone(),
+                start_pos.clone(),
+                first_one_pos.clone(),
+                rb_okvs.band_width,
+                rb_okvs.columns,
+            )
+            .unwrap();
+        });
+    }
+
+    #[bench]
+    fn bench_encode(b: &mut test::Bencher) {
+        let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
+        for i in 0..10000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),

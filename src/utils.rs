@@ -1,5 +1,5 @@
-use bitvec::prelude::*;
 use blake2::{Blake2b512, Digest};
+use sp_core::U256;
 
 use crate::error::{Error, Result};
 use crate::types::OkvsV;
@@ -10,7 +10,7 @@ use crate::types::OkvsV;
 /// Schloss Dagstuhl-Leibniz-Zentrum fuer Informatik, 2019.
 pub fn simple_gauss<V: OkvsV>(
     mut y: Vec<V>,
-    mut bands: Vec<BitVec>,
+    mut bands: Vec<U256>,
     start_pos: Vec<usize>,
     first_one_pos: Vec<usize>,
     band_width: usize,
@@ -25,13 +25,14 @@ pub fn simple_gauss<V: OkvsV>(
         let y_i = y[i].clone();
 
         for j in first_one_pos[i]..start_pos[i] + band_width {
-            if bands[i][j - start_pos[i]] {
+            if bands[i].bit(j - start_pos[i]) {
                 pivot[i] = j;
                 for k in (i + 1)..rows {
-                    if first_one_pos[k] <= pivot[i] && bands[k][pivot[i] - start_pos[k]] {
-                        bands[k] = bxor(
-                            &bands[i][j - start_pos[i]..],
-                            &bands[k],
+                    if first_one_pos[k] <= pivot[i] && bands[k].bit(pivot[i] - start_pos[k]) {
+                        bands[k] = xor(
+                            bands[i],
+                            bands[k],
+                            j - start_pos[i],
                             pivot[i] - start_pos[k],
                         );
                         y[k].in_place_xor(&y_i);
@@ -55,36 +56,24 @@ pub fn simple_gauss<V: OkvsV>(
     Ok(x)
 }
 
-fn bxor(a: &BitSlice, b: &BitVec, start_b: usize) -> BitVec {
-    let mut c = bitvec![];
-
-    if start_b > 0 {
-        c.extend(&b[..start_b]);
+fn xor(a: U256, b: U256, start_a: usize, start_b: usize) -> U256 {
+    match start_a.cmp(&start_b) {
+        std::cmp::Ordering::Equal => b ^ a,
+        std::cmp::Ordering::Less => {
+            let diff = start_b - start_a;
+            ((b >> diff) ^ a) << diff
+        }
+        std::cmp::Ordering::Greater => {
+            let diff = start_a - start_b;
+            ((b << diff) ^ a) >> diff
+        }
     }
-
-    let mut i = 0;
-    let mut j = start_b;
-
-    while i < a.len() && j < b.len() {
-        c.push(a[i] ^ b[j]);
-        i += 1;
-        j += 1;
-    }
-
-    if j < b.len() {
-        c.extend(&b[j..]);
-    }
-
-    if i < a.len() {
-        c.extend(&a[i..]);
-    }
-    c
 }
 
-pub fn inner_product<V: OkvsV>(m: &BitSlice, x: &[V], start: usize) -> V {
+pub fn inner_product<V: OkvsV>(m: &U256, x: &[V], start: usize) -> V {
     let mut result = V::default();
-    for i in 0..m.len() {
-        if m[i] {
+    for i in 0..m.bits() {
+        if m.bit(i) {
             result.in_place_xor(&x[start + i]);
         }
     }
@@ -128,13 +117,13 @@ pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     result
 }
 
-pub fn first_one_index(bits: &BitVec) -> usize {
-    for (i, v) in bits.iter().enumerate() {
-        if v == true {
+pub fn first_one_index(bits: &U256) -> usize {
+    for i in 0..bits.bits() {
+        if bits.bit(i) {
             return i;
         }
     }
-    bits.len()
+    bits.bits()
 }
 
 #[cfg(test)]
@@ -144,10 +133,8 @@ mod test {
 
     #[test]
     fn test_gaussian() {
-        let mut matrix = vec![];
-        matrix.push(bitvec![1, 1]);
-        matrix.push(bitvec![1, 1]);
-        matrix.push(bitvec![1, 1]);
+        let u = U256::from(0b11);
+        let matrix = vec![u, u, u];
 
         let start_pos = vec![0, 1, 2];
         let first_one_pos = vec![0, 1, 2];
@@ -175,7 +162,8 @@ mod test {
 
     #[test]
     fn test_inner_product() {
-        let a = bitvec![1, 1, 0];
+        let a = U256::from(3); // 1 1 0
+
         let b = vec![
             OkvsValue([0u8; 32]),
             OkvsValue([0u8; 32]),
@@ -201,7 +189,7 @@ mod test {
 
     #[test]
     fn test_first_one_index() {
-        let a = bitvec![0, 1];
+        let a = U256::from(2); // 0 1
         assert_eq!(first_one_index(&a), 1);
     }
 }
