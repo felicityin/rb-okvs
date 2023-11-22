@@ -12,7 +12,6 @@ pub fn simple_gauss<V: OkvsV>(
     mut y: Vec<V>,
     mut bands: Vec<U256>,
     start_pos: Vec<usize>,
-    first_one_pos: Vec<usize>,
     band_width: usize,
     cols: usize,
 ) -> Result<Vec<V>> {
@@ -24,11 +23,14 @@ pub fn simple_gauss<V: OkvsV>(
     for i in 0..rows {
         let y_i = y[i].clone();
 
-        for j in first_one_pos[i]..start_pos[i] + band_width {
+        for j in start_pos[i]..start_pos[i] + band_width {
             if bands[i].bit(j - start_pos[i]) {
                 pivot[i] = j;
                 for k in (i + 1)..rows {
-                    if first_one_pos[k] <= pivot[i] && bands[k].bit(pivot[i] - start_pos[k]) {
+                    if start_pos[k] > pivot[i] {
+                        break;
+                    }
+                    if bands[k].bit(pivot[i] - start_pos[k]) {
                         bands[k] = xor(
                             bands[i],
                             bands[k],
@@ -117,15 +119,6 @@ pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     result
 }
 
-pub fn first_one_index(bits: &U256) -> usize {
-    for i in 0..bits.bits() {
-        if bits.bit(i) {
-            return i;
-        }
-    }
-    bits.bits()
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -137,7 +130,6 @@ mod test {
         let matrix = vec![u, u, u];
 
         let start_pos = vec![0, 1, 2];
-        let first_one_pos = vec![0, 1, 2];
 
         let y = vec![
             OkvsValue([0u8; 32]),
@@ -145,15 +137,7 @@ mod test {
             OkvsValue([2u8; 32]),
         ];
 
-        let x = simple_gauss::<OkvsValue<32>>(
-            y.clone(),
-            matrix.clone(),
-            start_pos,
-            first_one_pos,
-            2,
-            4,
-        )
-        .unwrap();
+        let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_pos, 2, 4).unwrap();
 
         assert_eq!(inner_product(&matrix[0], &x, 0), y[0]);
         assert_eq!(inner_product(&matrix[1], &x, 1), y[1]);
@@ -185,11 +169,5 @@ mod test {
         assert_eq!(hash(&a, 10).len(), 10);
         assert_eq!(hash(&a, 64).len(), 64);
         assert_eq!(hash(&a, 70).len(), 70);
-    }
-
-    #[test]
-    fn test_first_one_index() {
-        let a = U256::from(2); // 0 1
-        assert_eq!(first_one_index(&a), 1);
     }
 }
