@@ -48,7 +48,9 @@ impl<const N: usize> OkvsK for OkvsKey<N> {
     /// hash2(key) -> {0, 1}^band_width
     fn hash_to_band(&self, band_width: usize) -> U256 {
         let v = hash(&self.0, (band_width + 7) / 8);
-        U256::from_little_endian(&v) & (U256::MAX << (256 - band_width)) >> (256 - band_width)
+        let shift = 256 - band_width;
+        let u = U256::from_little_endian(&v) & (U256::MAX << shift) >> shift;
+        u | U256::from(1)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -74,9 +76,7 @@ impl<const N: usize> OkvsV for OkvsValue<N> {
     }
 
     fn xor(&self, other: &Self) -> Self {
-        assert_eq!(self.0.len(), other.0.len());
         let mut result = [0u8; N];
-
         for (i, item) in self.0.iter().enumerate() {
             result[i] = item ^ other.0[i];
         }
@@ -84,8 +84,6 @@ impl<const N: usize> OkvsV for OkvsValue<N> {
     }
 
     fn in_place_xor(&mut self, other: &Self) {
-        assert_eq!(self.0.len(), other.0.len());
-
         for i in 0..self.0.len() {
             self.0[i] ^= other.0[i];
         }
