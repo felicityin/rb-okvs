@@ -11,7 +11,7 @@ use crate::utils::*;
 /// instantiation of RB-OKVS with fast encoding/decoding times, then one can
 /// pick larger values of ϵ such as 0.07-0.1.
 pub const EPSILON: f64 = 0.1;
-pub const LAMBDA: usize = 40;
+pub const LAMBDA: usize = 20;
 
 /// RB-OKVS, Oblivious Key-Value Stores
 pub struct RbOkvs {
@@ -22,7 +22,7 @@ pub struct RbOkvs {
 impl RbOkvs {
     pub fn new(kv_count: usize) -> RbOkvs {
         let columns = ((1.0 + EPSILON) * kv_count as f64) as usize;
-        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize; // 205
+        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize; // 130
 
         Self {
             columns,
@@ -44,7 +44,7 @@ impl Okvs for RbOkvs {
     fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
         let start = key.hash_to_index(self.columns - self.band_width);
         let band = key.hash_to_band(self.band_width);
-        inner_product(&band, encoding, start)
+        inner_product(&band, &encoding[start..])
     }
 }
 
@@ -173,8 +173,9 @@ mod tests {
 
     #[bench]
     fn bench_encode(b: &mut test::Bencher) {
+        // 1000000 777ms
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..100000 {
+        for i in 0..1000000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
@@ -189,8 +190,9 @@ mod tests {
 
     #[bench]
     fn bench_decode(b: &mut test::Bencher) {
+        // 1000000 774ms
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..1000 {
+        for i in 0..1000000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
@@ -201,8 +203,8 @@ mod tests {
         let encode = rb_okvs.encode(pairs).unwrap();
 
         b.iter(|| {
-            for i in 0..1000 {
-                rb_okvs.decode(&encode, &OkvsKey((i as u8).to_le_bytes()));
+            for i in 0..1000000 {
+                rb_okvs.decode(&encode, &OkvsKey((i as usize).to_le_bytes()));
             }
         });
     }
