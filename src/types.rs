@@ -47,10 +47,9 @@ impl<const N: usize> OkvsK for OkvsKey<N> {
 
     /// hash2(key) -> {0, 1}^band_width
     fn hash_to_band(&self, band_width: usize) -> U256 {
-        let v = hash(&self.0, (band_width + 7) / 8);
-        let shift = 256 - band_width;
-        let u = U256::from_little_endian(&v) & (U256::MAX << shift) >> shift;
-        u | U256::from(1)
+        let mut v = hash(&self.0, band_width / 8);
+        v[0] |= 1;
+        U256::from_little_endian(&v)
     }
 
     fn to_bytes(&self) -> Vec<u8> {

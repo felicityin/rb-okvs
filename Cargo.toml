@@ -6,7 +6,6 @@ edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10"
-bitvec = "1.0"
 blake2 = "0.10"
 sha256 = "1.4"
 sp-core = "26.0"
