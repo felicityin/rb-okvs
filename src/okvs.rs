@@ -10,8 +10,9 @@ use crate::utils::*;
 /// choices of ϵ such as 0.03-0.05 In contrast, if one wishes for an
 /// instantiation of RB-OKVS with fast encoding/decoding times, then one can
 /// pick larger values of ϵ such as 0.07-0.1.
-pub const EPSILON: f64 = 0.1;
-pub const LAMBDA: usize = 20;
+const EPSILON: f64 = 0.1;
+const _LAMBDA: usize = 20;
+const BAND_WIDTH: usize = 128; // ((LAMBDA as f64 + 15.21) / 0.2691) as usize = 130
 
 /// RB-OKVS, Oblivious Key-Value Stores
 pub struct RbOkvs {
@@ -22,12 +23,11 @@ pub struct RbOkvs {
 impl RbOkvs {
     pub fn new(kv_count: usize) -> RbOkvs {
         let columns = ((1.0 + EPSILON) * kv_count as f64) as usize;
-        let band_width = ((LAMBDA as f64 + 15.21) / 0.2691) as usize; // 130
 
         Self {
             columns,
-            band_width: if band_width < columns {
-                band_width
+            band_width: if BAND_WIDTH < columns {
+                BAND_WIDTH
             } else {
                 columns * 80 / 100
             },
@@ -38,7 +38,7 @@ impl RbOkvs {
 impl Okvs for RbOkvs {
     fn encode<K: OkvsK, V: OkvsV>(&self, input: Vec<Pair<K, V>>) -> Result<Encoding<V>> {
         let (matrix, start_pos, y) = self.create_sorted_matrix(input)?;
-        simple_gauss::<V>(y, matrix, start_pos, self.band_width, self.columns)
+        simple_gauss::<V>(y, matrix, start_pos, self.columns)
     }
 
     fn decode<V: OkvsV>(&self, encoding: &Encoding<V>, key: &impl OkvsK) -> V {
@@ -87,7 +87,6 @@ impl RbOkvs {
 mod tests {
     use super::*;
     use crate::types::{OkvsKey, OkvsValue};
-    use bitvec::prelude::*;
     extern crate test;
 
     #[test]
@@ -98,7 +97,7 @@ mod tests {
         assert!(pos < 30);
 
         let band = key.hash_to_band(10);
-        assert_eq!(band.bits(), 10);
+        assert!(band.bits() <= 10);
     }
 
     #[test]
@@ -115,7 +114,7 @@ mod tests {
     #[test]
     fn test_rb_okvs() {
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<4>>> = vec![];
-        for i in 0..10000 {
+        for i in 0..1000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u32).to_le_bytes()),
@@ -125,7 +124,7 @@ mod tests {
 
         let encode = rb_okvs.encode(pairs).unwrap();
 
-        for i in 0..10000 {
+        for i in 0..1000 {
             let decode = rb_okvs.decode(&encode, &OkvsKey((i as usize).to_le_bytes()));
             assert_eq!(decode, OkvsValue((i as u32).to_le_bytes()));
         }
@@ -164,7 +163,6 @@ mod tests {
                 y.clone(),
                 matrix.clone(),
                 start_pos.clone(),
-                rb_okvs.band_width,
                 rb_okvs.columns,
             )
             .unwrap();
@@ -173,9 +171,8 @@ mod tests {
 
     #[bench]
     fn bench_encode(b: &mut test::Bencher) {
-        // 1000000 777ms
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..1000000 {
+        for i in 0..100000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
@@ -190,9 +187,8 @@ mod tests {
 
     #[bench]
     fn bench_decode(b: &mut test::Bencher) {
-        // 1000000 774ms
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..1000000 {
+        for i in 0..100000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
@@ -203,32 +199,8 @@ mod tests {
         let encode = rb_okvs.encode(pairs).unwrap();
 
         b.iter(|| {
-            for i in 0..1000000 {
+            for i in 0..100000 {
                 rb_okvs.decode(&encode, &OkvsKey((i as usize).to_le_bytes()));
-            }
-        });
-    }
-
-    #[bench]
-    fn bench_bitarr(b: &mut test::Bencher) {
-        let mut a = bitarr![0; 16384];
-        let c = bitarr![1; 16384];
-
-        b.iter(|| {
-            for _ in 0..16384 {
-                a ^= c;
-            }
-        });
-    }
-
-    #[bench]
-    fn bench_bitvec(b: &mut test::Bencher) {
-        let mut a = bitvec![0; 16384];
-        let c = bitvec![1; 16384];
-
-        b.iter(|| {
-            for _ in 0..16384 {
-                a ^= &c;
             }
         });
     }

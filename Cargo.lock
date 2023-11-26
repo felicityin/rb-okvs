@@ -1624,7 +1624,6 @@ name = "rb-okvs"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "bitvec",
  "blake2",
  "sha256",
  "sp-core",

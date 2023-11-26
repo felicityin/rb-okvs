@@ -12,41 +12,31 @@ pub fn simple_gauss<V: OkvsV>(
     mut y: Vec<V>,
     mut bands: Vec<U256>,
     start_pos: Vec<usize>,
-    band_width: usize,
     cols: usize,
 ) -> Result<Vec<V>> {
     let rows = bands.len();
     assert_eq!(rows, start_pos.len());
     assert_eq!(rows, y.len());
-    let mut pivot: Vec<usize> = vec![usize::MAX; rows];
+    let mut pivot: Vec<usize> = vec![0; rows];
 
     for i in 0..rows {
         let y_i = y[i].clone();
 
-        for j in start_pos[i]..start_pos[i] + band_width {
-            if bit(&bands[i], j - start_pos[i]) {
-                pivot[i] = j;
-                for k in (i + 1)..rows {
-                    if start_pos[k] > pivot[i] {
-                        break;
-                    }
-                    if bit(&bands[k], pivot[i] - start_pos[k]) {
-                        bands[k] = xor(
-                            bands[i],
-                            bands[k],
-                            j - start_pos[i],
-                            pivot[i] - start_pos[k],
-                        );
-                        y[k].in_place_xor(&y_i);
-                    }
-                }
-                break;
-            }
+        let first_one = bands[i].trailing_zeros() as usize;
+        if first_one == 256 {
+            return Err(Error::ZeroRow(i));
         }
 
-        if pivot[i] == usize::MAX {
-            // row i is 0
-            return Err(Error::ZeroRow(i));
+        pivot[i] = first_one + start_pos[i];
+
+        for k in (i + 1)..rows {
+            if start_pos[k] > pivot[i] {
+                break;
+            }
+            if bit(&bands[k], pivot[i] - start_pos[k]) {
+                bands[k] = xor(bands[i], bands[k], first_one, pivot[i] - start_pos[k]);
+                y[k].in_place_xor(&y_i);
+            }
         }
     }
 
@@ -155,14 +145,19 @@ pub fn inner_product<V: OkvsV>(m: &U256, x: &[V]) -> V {
     let mut result = V::default();
     let bits = m.bits();
 
+    if bits <= 64 {
+        for i in 0..bits {
+            if m.0[0] & MASK[i] != 0 {
+                result.in_place_xor(&x[i]);
+            }
+        }
+        return result;
+    }
+
     for i in 0..64 {
         if m.0[0] & MASK[i] != 0 {
             result.in_place_xor(&x[i]);
         }
-    }
-
-    if bits <= 64 {
-        return result;
     }
 
     let x64 = &x[64..];
@@ -264,7 +259,7 @@ mod test {
             OkvsValue([2u8; 32]),
         ];
 
-        let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_pos, 2, 4).unwrap();
+        let x = simple_gauss::<OkvsValue<32>>(y.clone(), matrix.clone(), start_pos, 4).unwrap();
 
         assert_eq!(inner_product(&matrix[0], &x), y[0]);
         assert_eq!(inner_product(&matrix[1], &x[1..]), y[1]);
