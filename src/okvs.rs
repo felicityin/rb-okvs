@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use sp_core::U256;
 
 use crate::error::Result;
@@ -55,29 +53,26 @@ impl RbOkvs {
     ) -> Result<(Vec<U256>, Vec<usize>, Vec<V>)> {
         let n = input.len();
         let mut start_pos: Vec<(usize, usize)> = vec![(0, 0); n];
-        let mut bands: HashMap<usize, U256> = HashMap::new();
 
-        // Generate bands
-        for (i, (key, _value)) in input.iter().enumerate() {
-            let band = key.hash_to_band(self.band_width);
-            let start = key.hash_to_index(self.columns - self.band_width);
+        input.iter().enumerate().for_each(|(i, (k, _))| {
+            start_pos[i] = (i, k.hash_to_index(self.columns - self.band_width))
+        });
 
-            bands.insert(i, band);
-            start_pos[i] = (i, start);
-        }
-
-        start_pos.sort_by(|a, b| a.1.cmp(&b.1));
+        radix_sort(&mut start_pos, self.columns - self.band_width - 1);
 
         let mut matrix: Vec<U256> = vec![U256::default(); n];
         let mut start_ids: Vec<usize> = vec![0; n];
         let mut y: Vec<V> = vec![V::default(); n];
 
         // Generate binary matrix
-        for (k, (i, start)) in start_pos.into_iter().enumerate() {
-            matrix[k] = bands.get(&i).unwrap().to_owned();
-            y[k] = input[i].1.to_owned();
-            start_ids[k] = start;
-        }
+        start_pos
+            .into_iter()
+            .enumerate()
+            .for_each(|(k, (i, start))| {
+                matrix[k] = input[i].0.hash_to_band(self.band_width);
+                y[k] = input[i].1.to_owned();
+                start_ids[k] = start;
+            });
 
         Ok((matrix, start_ids, y))
     }
@@ -172,7 +167,7 @@ mod tests {
     #[bench]
     fn bench_encode(b: &mut test::Bencher) {
         let mut pairs: Vec<Pair<OkvsKey, OkvsValue<1>>> = vec![];
-        for i in 0..100000 {
+        for i in 0..1000000 {
             pairs.push((
                 OkvsKey((i as usize).to_le_bytes()),
                 OkvsValue((i as u8).to_le_bytes()),
