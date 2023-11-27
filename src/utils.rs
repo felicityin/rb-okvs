@@ -241,10 +241,51 @@ pub fn hash<T: AsRef<[u8]>>(data: &T, to_bytes_size: usize) -> Vec<u8> {
     result
 }
 
+/// Sort by arr[i].1
+pub fn radix_sort(arr: &mut Vec<(usize, usize)>, max: usize) {
+    let mut exp = 1;
+    loop {
+        if max / exp == 0 {
+            break;
+        }
+        *arr = count_sort(arr, exp);
+        exp *= 10;
+    }
+}
+
+fn count_sort(arr: &Vec<(usize, usize)>, exp: usize) -> Vec<(usize, usize)> {
+    let mut count = [0usize; 10];
+
+    arr.iter().for_each(|(_, b)| count[(b / exp) % 10] += 1);
+
+    for i in 1..10 {
+        count[i] += count[i - 1];
+    }
+
+    let mut output = vec![(0usize, 0usize); arr.len()];
+
+    arr.iter().rev().for_each(|(a, b)| {
+        output[count[(b / exp) % 10] - 1] = (*a, *b);
+        count[(b / exp) % 10] -= 1;
+    });
+
+    output
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::types::OkvsValue;
+
+    #[test]
+    fn test_sort() {
+        let mut arr = vec![(20, 0), (10, 2), (0, 1)];
+        radix_sort(&mut arr, 2);
+
+        assert_eq!(arr[0].1, 0);
+        assert_eq!(arr[1].1, 1);
+        assert_eq!(arr[2].1, 2);
+    }
 
     #[test]
     fn test_gaussian() {
